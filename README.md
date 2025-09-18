@@ -36,7 +36,7 @@ sudo semanage port -a -t http_port_t -p tcp 8080 || sudo semanage port -m -t htt
 No host (como root):
 
 ```bash
-curl -fsSL -o install_waf_demo.sh https://example.invalid/install_waf_demo.sh
+curl -fsSL -o install_waf_demo.sh https://raw.githubusercontent.com/datacentrics01/oci-waf-workshop/refs/heads/main/install_waf_demo.sh
 sudo bash install_waf_demo.sh
 ```
 
