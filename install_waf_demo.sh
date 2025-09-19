@@ -4,7 +4,7 @@ set -euo pipefail
 ### ====== CONFIG ======
 APP_USER="opc"
 APP_DIR="/opt/waf-demo"
-PORT="8080"
+PORT="8080"                  # troque para 8181 se quiser
 HOST="0.0.0.0"
 WORKERS="2"
 PYTHON_BIN="python3"
@@ -38,13 +38,13 @@ sudo -u "${APP_USER}" ${PYTHON_BIN} -m venv "${APP_DIR}/.venv"
 sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install --upgrade pip
 sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install fastapi "uvicorn[standard]" python-multipart
 
-### ====== APP FASTAPI ======
+### ====== APP FASTAPI (main única) ======
 cat > "${APP_DIR}/app/main.py" <<'PY'
 from fastapi import FastAPI, Form, UploadFile, File, Body
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 import logging
 
-app = FastAPI(title="OCI WAF Demo App")
+app = FastAPI(title="OCI WAF Demo App (one-main)")
 logger = logging.getLogger("waf-demo")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -52,31 +52,78 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 def health():
     return {"status": "ok"}
 
+LANDING = """
+<!doctype html><html lang="pt-BR"><meta charset="utf-8">
+<title>WAF Demo</title>
+<body style="font-family: system-ui; max-width:720px; margin:40px auto">
+  <h1>OCI WAF Demo</h1>
+  <ul>
+    <li><a href="/login">/login</a> (formulário simples, ideal para CAPTCHA)</li>
+    <li><a href="/comentarios-form">/comentarios-form</a> (form p/ XSS)</li>
+    <li>Endpoints: <code>POST /comentarios</code>, <code>POST /upload</code> (raw), <code>POST /upload-mp</code> (multipart)</li>
+    <li>Health: <code>/health</code></li>
+  </ul>
+  <p style="color:#666">Ambiente de homologação — não usar em produção.</p>
+</body></html>
+"""
+@app.get("/", response_class=HTMLResponse)
+def root():
+    return LANDING
+
+LOGIN_FORM = """
+<!doctype html><html lang="pt-BR"><meta charset="utf-8">
+<title>Login</title>
+<body style="font-family: system-ui; max-width:480px; margin:40px auto">
+  <h1>Login</h1>
+  <form action="/login" method="post">
+    <label>Usuário<br><input type="text" name="user" required></label><br><br>
+    <label>Senha<br><input type="password" name="pass_" required></label><br><br>
+    <button type="submit">Entrar</button>
+  </form>
+  <p style="color:#666">Demo para WAF/CAPTCHA.</p>
+  <p><a href="/">Voltar</a></p>
+</body></html>
+"""
+@app.get("/login", response_class=HTMLResponse)
+def login_form():
+    return LOGIN_FORM
+
+@app.post("/login", response_class=PlainTextResponse)
+def login_submit(user: str = Form(...), pass_: str = Form(...)):
+    logger.info("Login attempt user=%s", user)
+    return f"OK: recebido login de {user}"
+
+XSS_FORM = """
+<!doctype html><html lang="pt-BR"><meta charset="utf-8">
+<title>XSS Demo</title>
+<body style="font-family: system-ui; max-width:480px; margin:40px auto">
+  <h1>XSS demo</h1>
+  <form action="/comentarios" method="post">
+    <label>Mensagem<br><input type="text" name="mensagem" value="<script>alert(1)</script>"></label><br><br>
+    <button type="submit">Enviar</button>
+  </form>
+  <p><a href="/">Voltar</a></p>
+</body></html>
+"""
+@app.get("/comentarios-form", response_class=HTMLResponse)
+def comentarios_form():
+    return XSS_FORM
+
 @app.post("/comentarios", response_class=HTMLResponse)
 async def comentarios(mensagem: str = Form(...)):
     logger.info("XSS test payload: %s", mensagem)
-    return f"""
-    <html><body>
+    return f"""<!doctype html><html><body>
       <h1>Comentário recebido</h1>
       <div>Você disse: {mensagem}</div>
       <small>Demo - NÃO usar em produção</small>
-    </body></html>
-    """
+    </body></html>"""
 
-@app.post("/login")
-async def login(user: str = Form(...), pass_: str = Form(...)):
-    pseudo_query = f"SELECT * FROM users WHERE user='{user}' AND pass='{pass_}'"
-    logger.info("SQLi test pseudo-query: %s", pseudo_query)
-    return JSONResponse({"ok": True, "note": "Pseudo-login executado (demo).", "user": user})
-
-# Raw body (para --data-binary)
 @app.post("/upload")
 async def upload_raw(raw: bytes = Body(...)):
     size = len(raw)
     logger.info("Upload RAW size bytes: %s", size)
     return {"received_bytes": size}
 
-# Multipart (para -F)
 @app.post("/upload-mp")
 async def upload_mp(file: UploadFile = File(...)):
     content = await file.read()
@@ -199,7 +246,7 @@ Service:
   journalctl -u waf-demo -f
 
 Para testar VIA WAF:
-  - Coloque um Load Balancer HTTP/HTTPS em frente ao 172.16.1.93:8080
+  - Coloque um Load Balancer HTTP/HTTPS em frente ao 172.16.1.93:${PORT}
   - Anexe sua WAF Policy ao LB (Firewall/enforcement point)
   - Ative Body Inspection (ex.: 8192) + ação 403 se exceder
   - Troque BASE_URL.env para o FQDN do LB e rode os scripts
